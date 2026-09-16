@@ -120,9 +120,16 @@ Input Monitoring entry by hand.
 
 ```bash
 make test      # 55 assertions over the pure logic, no hardware needed
+make lint      # shell scripts must parse and stay pure ASCII
 make devices   # every HID device and collection this Mac can see
-make build     # builds dist/MX Switch.app and runs the tests
+make build     # builds dist/MX Switch.app and runs lint plus the tests
 ```
+
+`make lint` is not decoration. Under a UTF-8 locale bash reads a multibyte
+character next to an expansion as part of the variable name, so `"$app..."`
+written with a typographic ellipsis becomes an unbound variable and `set -u`
+kills the build. A C locale hides it completely, so the check is the only thing
+that catches it reliably.
 
 Tests are a plain executable rather than an XCTest bundle, because XCTest ships
 with Xcode while this project also builds against the Command Line Tools alone.

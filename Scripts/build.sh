@@ -20,16 +20,17 @@ contents="$app/Contents"
 # whatever asked for access, and a bundle is something the user can recognise.
 helper="$contents/Helpers/MX Switch Service.app"
 
-echo "Building ($configuration)…"
+Scripts/lint.sh
+echo "Building (${configuration})..."
 swift build -c "$configuration" --product mxswitchd
 swift build -c "$configuration" --product MXSwitchApp
 swift build -c "$configuration" --product mxswitch-tests
 bin="$(swift build -c "$configuration" --show-bin-path)"
 
-echo "Running tests…"
+echo "Running tests..."
 "$bin/mxswitch-tests"
 
-echo "Assembling $app…"
+echo "Assembling ${app}..."
 rm -rf "$app"
 mkdir -p "$contents/MacOS" "$contents/Resources" "$helper/Contents/MacOS" "$helper/Contents/Resources"
 cp "$bin/MXSwitchApp" "$contents/MacOS/MXSwitch"
@@ -77,5 +78,5 @@ codesign --force --sign - --timestamp=none "$app"
 codesign --verify --deep --strict "$app"
 
 echo
-echo "Built $app"
+echo "Built ${app}"
 echo "Install it with:  make install"

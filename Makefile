@@ -1,9 +1,12 @@
-.PHONY: build test install uninstall clean run
+.PHONY: build lint test devices install uninstall clean
 
 build:
 	@Scripts/build.sh
 
-test:
+lint:
+	@Scripts/lint.sh
+
+test: lint
 	@DEVELOPER_DIR=$${DEVELOPER_DIR:-/Library/Developer/CommandLineTools} swift run -c release mxswitch-tests
 
 devices:
