@@ -23,29 +23,46 @@ public struct PresenceWatcher: Sendable {
     private var wasPresent: Bool?
     private var absentCount = 0
     private var lastPollTime: Double?
+    /// A jump seen while presence was unknown is held until a usable poll can
+    /// consume it. Dropping it would let the first real poll after a sleep fire.
+    private var pendingJump = false
 
     public private(set) var lastResync = false
+    public private(set) var lastResyncGap: Double = 0
 
     public init(pollInterval: Double, absentPollsRequired: Int) {
         self.pollInterval = pollInterval
         self.absentPollsRequired = max(1, absentPollsRequired)
     }
 
+    /// Forget when the last poll happened, without touching presence state. The
+    /// daemon calls this after work that blocks its own loop for many seconds, so
+    /// its own slowness is not mistaken for the Mac having slept.
+    public mutating func resetClock() {
+        lastPollTime = nil
+        pendingJump = false
+    }
+
     /// `now` must be wall clock. macOS pauses the monotonic clock across sleep,
     /// so only wall clock exposes the jump that separates a wake from a keypress.
     public mutating func feed(_ presence: Presence, now: Double) -> Bool {
         lastResync = false
+        if let last = lastPollTime, now - last > Self.timeJumpFactor * pollInterval {
+            pendingJump = true
+            lastResyncGap = now - last
+        }
+        lastPollTime = now
+
         guard presence != .unknown else { return false }
         let present = presence == .present
 
-        if let last = lastPollTime, now - last > Self.timeJumpFactor * pollInterval {
-            lastPollTime = now
+        if pendingJump {
+            pendingJump = false
             wasPresent = present
             absentCount = 0
             lastResync = true
             return false
         }
-        lastPollTime = now
 
         guard let previously = wasPresent else {
             wasPresent = present

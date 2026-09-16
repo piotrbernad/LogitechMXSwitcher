@@ -168,6 +168,44 @@ Check.suite("presence watcher") {
         Check.that(w.feed(.absent, now: 3703), "fires")
     }
 
+    Check.test("a jump seen while presence is unknown is not lost") {
+        var w = watcher(absent: 2)
+        _ = w.feed(.present, now: 100)
+        // The Mac slept, and the first poll back could not read the bus.
+        Check.that(!w.feed(.unknown, now: 3700), "unknown poll fires nothing")
+        Check.that(!w.lastResync, "the jump is held, not consumed yet")
+        Check.that(!w.feed(.absent, now: 3701), "the usable poll consumes the jump")
+        Check.that(w.lastResync, "and reports the resync")
+        Check.that(!w.feed(.absent, now: 3702), "state resumed as absent, nothing to fire")
+    }
+
+    Check.test("an unknown poll does not manufacture a jump on its own") {
+        var w = watcher(absent: 2)
+        _ = w.feed(.present, now: 100)
+        Check.that(!w.feed(.unknown, now: 101), "unknown")
+        Check.that(!w.feed(.unknown, now: 102), "unknown")
+        Check.that(!w.feed(.absent, now: 103), "first absence, no resync")
+        Check.that(!w.lastResync, "no false jump from the unknown gap")
+        Check.that(w.feed(.absent, now: 104), "second absence fires")
+    }
+
+    Check.test("the reported gap is the real elapsed time") {
+        var w = watcher(absent: 2)
+        _ = w.feed(.present, now: 100)
+        _ = w.feed(.present, now: 3700)
+        Check.equal(w.lastResyncGap, 3600, "gap in seconds")
+    }
+
+    Check.test("resetting the clock stops our own slowness reading as sleep") {
+        var w = watcher(absent: 2)
+        _ = w.feed(.present, now: 100)
+        // A push just blocked the loop for 35 seconds.
+        w.resetClock()
+        Check.that(!w.feed(.absent, now: 135), "first absence after the block")
+        Check.that(!w.lastResync, "not treated as a sleep")
+        Check.that(w.feed(.absent, now: 136), "and a real departure still fires")
+    }
+
     Check.test("a debounce of zero is clamped to one poll") {
         var w = PresenceWatcher(pollInterval: 1, absentPollsRequired: 0)
         _ = w.feed(.present, now: 100)

@@ -86,7 +86,10 @@ final class Daemon {
         if accessDenied { return .permissionDenied }
         let presence = transport.presence(of: keyboard)
         guard watcher.feed(presence, now: Date().timeIntervalSince1970) else {
-            if watcher.lastResync { log("time jump (sleep/wake), presence resynced without switching") }
+            if watcher.lastResync {
+                log(String(format: "wall clock jumped %.0fs, presence resynced without switching",
+                           watcher.lastResyncGap))
+            }
             return .watching
         }
         log("keyboard left this Mac, sending \(mouse.name) to key \(target.keyLabel)")
@@ -94,12 +97,17 @@ final class Daemon {
             mouse, to: target, budget: config.sendBudget,
             sleepAbort: config.sleepAbort, confirmDelay: config.confirmDelay)
         record(outcome, device: mouse, target: target)
+        // A push can block this loop for the whole budget. That is our own
+        // slowness, not the Mac sleeping, so do not let the next poll read it as one.
+        watcher.resetClock()
         return outcome == .denied ? .permissionDenied : .watching
     }
 
     private func runPendingCommand(_ config: Config) {
         guard let command = store.loadCommand(), command.id > acknowledgedCommand else { return }
         acknowledgedCommand = command.id
+        // Commands talk to hardware and can take tens of seconds.
+        defer { watcher.resetClock() }
         switch command.kind {
         case .restart:
             note("restarting to pick up a permission change")
@@ -151,6 +159,9 @@ final class Daemon {
         case .denied: note("permission denied: grant Input Monitoring to mxswitchd")
         case .targetOutOfRange(let available): note("key \(target.keyLabel) is not paired (\(device.name) reports \(available) slots)")
         case .abortedForSleep: note("aborted: the Mac slept mid-switch")
+        case .notOnThisMac:
+            note("\(device.name) is not connected to this Mac, so it cannot be moved from here. "
+                + "Install MX Switch on the other Mac so it can send the mouse back.")
         case .gaveUp(let attempts): note("\(device.name) did not move after \(attempts) attempts")
         }
     }

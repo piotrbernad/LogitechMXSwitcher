@@ -168,10 +168,19 @@ finds nothing. `make devices` prints the collections if you need to check.
 signature of the binary, so a rebuild invalidates it. Remove the stale entry, add
 the new one, and click Restart Service.
 
+**The keyboard switches but the mouse stays behind.** Almost always the other Mac
+does not have MX Switch installed. A copy can only push the mouse *away* from
+itself, so with one install the mouse leaves once and nothing can send it back.
+Install on both Macs. The log says
+`is not connected to this Mac, so it cannot be moved from here` when this is what
+happened.
+
 **Nothing happens on Easy-Switch.** Read
 `~/Library/Application Support/MXSwitch/mxswitchd.log`. "did not move after N
 attempts" means the mouse never confirmed its departure. "the Mac slept
 mid-switch" means the sleep guard fired and declined to act on a stale trigger.
+Crashes land in `/Library/Logs/DiagnosticReports/MXSwitchService-*.ips`, and
+repeated `mxswitchd started` lines in the log mean launchd is restarting it.
 
 **The mouse went to a slot with nothing on it.** Set **Other Mac** to a key that
 is actually paired. The mouse reports three slots whether or not they are in use,

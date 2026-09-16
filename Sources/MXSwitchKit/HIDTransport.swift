@@ -53,7 +53,21 @@ public enum ExchangeResult: Equatable, Sendable {
     /// setCurrentHost deliberately never replies.
     case sent(responses: [[UInt8]])
     case denied(code: IOReturn)
-    case unreachable
+    /// The device is not offering its HID++ interface to this Mac. That is what
+    /// a device paired to another computer looks like, and also a sleeping one.
+    case notConnected
+    case openFailed(code: IOReturn)
+    case writeFailed(code: IOReturn)
+
+    public var note: String {
+        switch self {
+        case .sent: return "report sent"
+        case .denied(let code): return "open denied, \(describeIOReturn(code))"
+        case .notConnected: return "not connected to this Mac"
+        case .openFailed(let code): return "open failed, \(describeIOReturn(code))"
+        case .writeFailed(let code): return "write failed, \(describeIOReturn(code))"
+        }
+    }
 }
 
 /// IOKit HID++ transport. Enumeration needs no privileges; opening the vendor
@@ -64,6 +78,12 @@ public enum ExchangeResult: Equatable, Sendable {
 public final class HIDTransport {
     private let enumerationManager: IOHIDManager
     private let runLoop: CFRunLoop
+    /// One collector for the life of the transport. IOKit keeps registered input
+    /// report callbacks in a set on the device, and the device objects here come
+    /// from the long-lived enumeration manager, so a per-call collector could be
+    /// freed while an entry still pointed at it. That was a use-after-free that
+    /// segfaulted the daemon on every exchange that actually got a reply.
+    private let collector = ReportCollector(capacity: 64)
 
     public init() {
         enumerationManager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
@@ -162,18 +182,20 @@ public final class HIDTransport {
             $0.info.vendorID == device.vendorID && $0.info.productID == device.productID
         }
         guard let target = candidates.first(where: { $0.info.hasHIDPPInterface }) else {
-            return .unreachable
+            return .notConnected
         }
         let hid = target.device
 
-        switch Self.classifyOpen(IOHIDDeviceOpen(hid, IOOptionBits(kIOHIDOptionsTypeNone))) {
+        let openResult = IOHIDDeviceOpen(hid, IOOptionBits(kIOHIDOptionsTypeNone))
+        switch Self.classifyOpen(openResult) {
         case .opened: break
         case .denied(let code): return .denied(code: code)
-        case .absent, .failed: return .unreachable
+        case .absent: return .notConnected
+        case .failed(let code): return .openFailed(code: code)
         }
         defer { IOHIDDeviceClose(hid, IOOptionBits(kIOHIDOptionsTypeNone)) }
 
-        let collector = ReportCollector(capacity: 64)
+        collector.reset()
         IOHIDDeviceRegisterInputReportCallback(
             hid,
             collector.buffer,
@@ -203,7 +225,7 @@ public final class HIDTransport {
         }
         guard written == kIOReturnSuccess else {
             if case .denied(let code) = Self.classifyOpen(written) { return .denied(code: code) }
-            return .unreachable
+            return .writeFailed(code: written)
         }
 
         let deadline = Date().addingTimeInterval(timeout)
@@ -239,6 +261,10 @@ private final class ReportCollector {
         self.capacity = CFIndex(capacity)
         buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
         buffer.initialize(repeating: 0, count: capacity)
+    }
+
+    func reset() {
+        reports.removeAll(keepingCapacity: true)
     }
 
     deinit {

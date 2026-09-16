@@ -7,6 +7,9 @@ public enum PushOutcome: Equatable, Sendable {
     case targetOutOfRange(available: Int)
     /// The Mac slept partway through. Acting on a stale trigger is worse than doing nothing.
     case abortedForSleep
+    /// The device never showed its HID++ interface here. A device paired to
+    /// another computer looks exactly like this, and no amount of retrying helps.
+    case notOnThisMac
     case gaveUp(attempts: Int)
 
     public var succeeded: Bool {
@@ -46,7 +49,9 @@ public final class Switcher {
         case denied(code: IOReturn)
         /// Nothing came back. `opened` distinguishes "wrote it, device stayed quiet"
         /// from "never reached the device", which matters for setCurrentHost.
-        case noReply(opened: Bool)
+        /// `outcome` carries the transport's own verdict, which says whether the
+        /// device is simply not on this Mac.
+        case noReply(opened: Bool, outcome: ExchangeResult)
     }
 
     func call(
@@ -63,11 +68,14 @@ public final class Switcher {
             deviceIndex: deviceIndex, featureIndex: featureIndex,
             functionID: functionID, params: params)
         var opened = false
+        var last = ExchangeResult.notConnected
         for attempt in 1...max(1, attempts) {
-            switch transport.exchange(with: device, report: report, timeout: timeout, reads: reads) {
+            let outcome = transport.exchange(with: device, report: report, timeout: timeout, reads: reads)
+            last = outcome
+            switch outcome {
             case .denied(let code):
                 return .denied(code: code)
-            case .unreachable:
+            case .notConnected, .openFailed, .writeFailed:
                 break
             case .sent(let responses):
                 opened = true
@@ -84,20 +92,23 @@ public final class Switcher {
             }
             if attempt < max(1, attempts) { sleep(0.3) }
         }
-        return .noReply(opened: opened)
+        return .noReply(opened: opened, outcome: last)
     }
 
     enum Resolution: Equatable {
         case found(deviceIndex: UInt8, featureIndex: UInt8)
         case denied
         case unsupported
-        case unreachable
+        /// Nothing answered. The transport's verdict rides along so the log can say
+        /// "not connected to this Mac" instead of guessing at "asleep".
+        case unreachable(outcome: ExchangeResult)
     }
 
     /// Ask IRoot where a feature sits in this device's table. Feature indexes are
     /// firmware specific, so they are never hard coded.
     func resolveFeature(_ feature: HIDPP.FeatureID, on device: DeviceRef) -> Resolution {
         var sawDevice = false
+        var last = ExchangeResult.notConnected
         for deviceIndex in HIDPP.deviceIndexCandidates {
             let result = call(
                 device, deviceIndex: deviceIndex, featureIndex: HIDPP.irootFeatureIndex,
@@ -119,12 +130,13 @@ public final class Switcher {
             case .deviceError(let code):
                 log("device index 0x\(hex(deviceIndex)): HID++ error 0x\(hex(code))")
                 sawDevice = true
-            case .noReply(let opened):
-                log("device index 0x\(hex(deviceIndex)): no reply (interface \(opened ? "opened" : "did not open"))")
+            case .noReply(let opened, let outcome):
+                last = outcome
+                log("device index 0x\(hex(deviceIndex)): \(outcome.note)")
                 if opened { sawDevice = true }
             }
         }
-        return sawDevice ? .unsupported : .unreachable
+        return sawDevice ? .unsupported : .unreachable(outcome: last)
     }
 
     func hostInfo(_ device: DeviceRef, deviceIndex: UInt8, featureIndex: UInt8) -> (count: Int, current: Int)? {
@@ -151,9 +163,9 @@ public final class Switcher {
             return false
         case .denied:
             return false
-        case .noReply(let opened):
+        case .noReply(let opened, let outcome):
             if !opened {
-                log("setCurrentHost(\(target.index)) not sent: could not open \(device.name)")
+                log("setCurrentHost(\(target.index)) not sent: \(outcome.note)")
             }
             return opened
         case .ok:
@@ -171,6 +183,7 @@ public final class Switcher {
     ) -> PushOutcome {
         let deadline = now() + budget
         var attempt = 0
+        var onlyDisconnected = true
 
         func slept(since: Double, expected: Double) -> Bool {
             let gap = now() - since
@@ -200,15 +213,22 @@ public final class Switcher {
 
             let indexes: (device: UInt8, feature: UInt8)
             if useFast, let cached {
+                onlyDisconnected = false
                 indexes = cached
             } else {
                 switch resolveFeature(.changeHost, on: device) {
                 case .denied:
                     return .denied
                 case .found(let deviceIndex, let featureIndex):
+                    onlyDisconnected = false
                     indexes = (deviceIndex, featureIndex)
-                case .unsupported, .unreachable:
-                    log("\(device.name) did not answer HID++ this attempt (asleep or out of range)")
+                case .unsupported:
+                    onlyDisconnected = false
+                    log("\(device.name) does not expose ChangeHost")
+                    return .gaveUp(attempts: attempt)
+                case .unreachable(let outcome):
+                    if outcome != .notConnected { onlyDisconnected = false }
+                    log("\(device.name) unreachable this attempt: \(outcome.note)")
                     guard let retry = waitForRetry() else { break attempts }
                     if let outcome = retry { return outcome }
                     continue attempts
@@ -252,7 +272,7 @@ public final class Switcher {
             guard let retry = waitForRetry() else { break attempts }
             if let outcome = retry { return outcome }
         }
-        return .gaveUp(attempts: attempt)
+        return onlyDisconnected ? .notOnThisMac : .gaveUp(attempts: attempt)
     }
 
     private func backoffDelay(attempt: Int, deadline: Double) -> Double? {
@@ -286,7 +306,7 @@ public final class Switcher {
             switch result {
             case .denied: return .denied
             case .ok, .deviceError: return .ok
-            case .noReply(let opened): if opened { return .ok }
+            case .noReply(let opened, _): if opened { return .ok }
             }
         }
         return .deviceUnreachable
