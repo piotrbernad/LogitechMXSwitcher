@@ -16,6 +16,10 @@ public enum Presence: Equatable, Sendable {
 /// resyncs without firing.
 public struct PresenceWatcher: Sendable {
     public static let timeJumpFactor: Double = 5
+    /// The clock is only a backstop now that real wakes arrive from IOKit. On a
+    /// real machine this daemon's own scheduling stalls reached 99 seconds, so a
+    /// tighter bound threw away genuine Easy-Switch presses.
+    public static let minimumJump: Double = 120
 
     public let pollInterval: Double
     public let absentPollsRequired: Int
@@ -35,6 +39,14 @@ public struct PresenceWatcher: Sendable {
         self.absentPollsRequired = max(1, absentPollsRequired)
     }
 
+    /// The Mac just woke. Resynchronise on the next usable poll instead of acting
+    /// on a keyboard that is absent only because Bluetooth has not returned yet.
+    public mutating func noteWake() {
+        pendingJump = true
+        lastResyncGap = 0
+        lastPollTime = nil
+    }
+
     /// Forget when the last poll happened, without touching presence state. The
     /// daemon calls this after work that blocks its own loop for many seconds, so
     /// its own slowness is not mistaken for the Mac having slept.
@@ -47,7 +59,8 @@ public struct PresenceWatcher: Sendable {
     /// so only wall clock exposes the jump that separates a wake from a keypress.
     public mutating func feed(_ presence: Presence, now: Double) -> Bool {
         lastResync = false
-        if let last = lastPollTime, now - last > Self.timeJumpFactor * pollInterval {
+        let threshold = max(Self.timeJumpFactor * pollInterval, Self.minimumJump)
+        if let last = lastPollTime, now - last > threshold {
             pendingJump = true
             lastResyncGap = now - last
         }

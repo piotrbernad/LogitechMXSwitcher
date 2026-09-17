@@ -35,6 +35,10 @@ public func describeIOReturn(_ code: IOReturn) -> String {
     case kIOReturnNotPrivileged: return "not privileged (0xE00002C1)"
     case kIOReturnNotOpen: return "not open (0xE00002CD)"
     case kIOReturnExclusiveAccess: return "exclusive access (0xE00002C5)"
+    case kIOReturnError: return "general IOKit error (0xE00002BC)"
+    case kIOReturnBusy: return "device busy (0xE0000206)"
+    case kIOReturnTimeout: return "timed out (0xE00002D6)"
+    case kIOReturnAborted: return "aborted (0xE00002EB)"
     default: return String(format: "IOReturn 0x%08X", UInt32(bitPattern: code))
     }
 }

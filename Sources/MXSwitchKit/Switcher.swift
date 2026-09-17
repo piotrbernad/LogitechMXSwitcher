@@ -107,7 +107,10 @@ public final class Switcher {
     /// Ask IRoot where a feature sits in this device's table. Feature indexes are
     /// firmware specific, so they are never hard coded.
     func resolveFeature(_ feature: HIDPP.FeatureID, on device: DeviceRef) -> Resolution {
-        var sawDevice = false
+        // Only an actual IRoot answer proves a feature is missing. Writing the
+        // request and hearing nothing back proves nothing at all, and treating it
+        // as "unsupported" abandoned pushes that just needed another try.
+        var deviceAnswered = false
         var last = ExchangeResult.notConnected
         for deviceIndex in HIDPP.deviceIndexCandidates {
             let result = call(
@@ -120,7 +123,7 @@ public final class Switcher {
                 log("device index 0x\(hex(deviceIndex)): open denied, \(describeIOReturn(code))")
                 return .denied
             case .ok(let params):
-                sawDevice = true
+                deviceAnswered = true
                 guard let index = HIDPP.featureIndex(fromGetFeatureParams: params) else {
                     log("device index 0x\(hex(deviceIndex)): feature 0x\(String(feature.rawValue, radix: 16)) unsupported")
                     continue
@@ -129,14 +132,13 @@ public final class Switcher {
                 return .found(deviceIndex: deviceIndex, featureIndex: index)
             case .deviceError(let code):
                 log("device index 0x\(hex(deviceIndex)): HID++ error 0x\(hex(code))")
-                sawDevice = true
+                deviceAnswered = true
             case .noReply(let opened, let outcome):
                 last = outcome
-                log("device index 0x\(hex(deviceIndex)): \(outcome.note)")
-                if opened { sawDevice = true }
+                log("device index 0x\(hex(deviceIndex)): \(outcome.note)\(opened ? ", no reply" : "")")
             }
         }
-        return sawDevice ? .unsupported : .unreachable(outcome: last)
+        return deviceAnswered ? .unsupported : .unreachable(outcome: last)
     }
 
     func hostInfo(_ device: DeviceRef, deviceIndex: UInt8, featureIndex: UInt8) -> (count: Int, current: Int)? {
@@ -267,7 +269,9 @@ public final class Switcher {
             }
             // A stale cached index is the likeliest reason a fast path went nowhere.
             if useFast { cachedChangeHost[device] = nil }
-            log("\(device.name) still present after setCurrentHost(\(target.index)), retrying")
+            log(sent
+                ? "\(device.name) did not leave this Mac after setCurrentHost(\(target.index)), retrying"
+                : "\(device.name) did not accept setCurrentHost(\(target.index)), retrying")
 
             guard let retry = waitForRetry() else { break attempts }
             if let outcome = retry { return outcome }

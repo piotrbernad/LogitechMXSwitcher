@@ -36,10 +36,16 @@ machine sits on. Easy-Switch then carries the mouse in both directions.
 | Home Mac mini | 2 | key 1 |
 | anything on key 3 | 3 | not installed, ignored |
 
-Two guards keep it from firing when it should not. A wall-clock jump larger than
-five poll intervals means the Mac slept, so the state resynchronises without
-switching. A transport failure counts as "unknown" rather than "keyboard absent",
-so a Bluetooth hiccup cannot trigger a switch by itself.
+Two guards keep it from firing when it should not. Sleep and wake arrive from
+IOKit directly, so waking resynchronises the state instead of reading a missing
+keyboard as a keypress. A transport failure counts as "unknown" rather than
+"keyboard absent", so a Bluetooth hiccup cannot trigger a switch by itself.
+
+The clock is only a backstop for a missed wake notification, deliberately set at
+two minutes. An earlier version inferred sleep from the clock alone and threw
+away real presses, because this daemon's own scheduling stalls were measured at
+up to 99 seconds while the shortest genuine sleep was 121. No threshold separates
+those, which is why the real signal is used instead.
 
 ## Requirements
 

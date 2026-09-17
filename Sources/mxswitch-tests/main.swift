@@ -206,6 +206,34 @@ Check.suite("presence watcher") {
         Check.that(w.feed(.absent, now: 136), "and a real departure still fires")
     }
 
+    Check.test("a scheduling stall is not mistaken for sleep") {
+        var w = watcher(absent: 2)
+        _ = w.feed(.present, now: 100)
+        // Measured on a real Mac, this daemon's own stalls reached 99 seconds.
+        Check.that(!w.feed(.absent, now: 199), "first absence after a 99s stall")
+        Check.that(!w.lastResync, "the stall did not throw the press away")
+        Check.that(w.feed(.absent, now: 200), "and the press still fires")
+    }
+
+    Check.test("a real wake resyncs even with no clock gap at all") {
+        var w = watcher(absent: 2)
+        _ = w.feed(.present, now: 100)
+        _ = w.feed(.absent, now: 101)
+        // IOKit said the Mac woke, so the keyboard being gone means nothing yet.
+        w.noteWake()
+        Check.that(!w.feed(.absent, now: 102), "no switch on the first poll after waking")
+        Check.that(w.lastResync, "resync reported")
+        Check.that(!w.feed(.absent, now: 103), "state resumed as absent, nothing to fire")
+    }
+
+    Check.test("a press after a wake still fires normally") {
+        var w = watcher(absent: 2)
+        w.noteWake()
+        _ = w.feed(.present, now: 100)
+        Check.that(!w.feed(.absent, now: 101), "first absence")
+        Check.that(w.feed(.absent, now: 102), "second absence fires")
+    }
+
     Check.test("a debounce of zero is clamped to one poll") {
         var w = PresenceWatcher(pollInterval: 1, absentPollsRequired: 0)
         _ = w.feed(.present, now: 100)

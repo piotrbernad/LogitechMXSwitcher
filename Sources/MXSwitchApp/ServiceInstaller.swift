@@ -107,7 +107,9 @@ enum ServiceInstaller {
             </array>
             <key>RunAtLoad</key><true/>
             <key>KeepAlive</key><true/>
-            <key>ProcessType</key><string>Background</string>
+            <!-- Not Background: that opts into CPU and I/O throttling, and a one
+                 second poll that must catch a keypress cannot afford to be stalled. -->
+            <key>ProcessType</key><string>Interactive</string>
         </dict>
         </plist>
         """

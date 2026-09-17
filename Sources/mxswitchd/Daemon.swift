@@ -9,6 +9,7 @@ final class Daemon {
     private let transport: HIDTransport
     private let log: Log
     private let switcher: Switcher
+    private let sleepMonitor: SleepMonitor
 
     private var watcher: PresenceWatcher
     private var watcherParameters: (poll: Double, absent: Int)
@@ -25,6 +26,7 @@ final class Daemon {
         self.transport = transport
         self.log = log
         switcher = Switcher(transport: transport, log: { log($0) })
+        sleepMonitor = SleepMonitor(runLoop: CFRunLoopGetCurrent())
         let config = store.loadConfig() ?? Config()
         watcherParameters = (config.pollInterval, config.absentPollsRequired)
         watcher = PresenceWatcher(
@@ -36,8 +38,15 @@ final class Daemon {
 
     func run() {
         log("mxswitchd started, state directory \(store.directory.path), euid \(geteuid())")
+        if !sleepMonitor.isActive {
+            log("could not register for sleep and wake notifications, falling back to the clock")
+        }
         while true {
             let config = store.loadConfig() ?? Config()
+            if sleepMonitor.consumeWake() {
+                log("the Mac woke, presence will resync without switching")
+                watcher.noteWake()
+            }
             resyncWatcher(with: config)
             refreshAccessCheck(config)
             runPendingCommand(config)
